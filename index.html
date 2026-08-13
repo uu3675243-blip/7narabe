@@ -132,7 +132,10 @@ button:disabled{opacity:.45;cursor:not-allowed}
         <span><b>ループルール</b><div class="desc">ONにすると「K(13)」の隣に「A(1)」を出せるようになります（A→K→A…と循環）。</div></span>
       </label>
       <label class="chk"><input type="checkbox" id="ruleMustSeven">
-        <span><b>7を先に出す義務</b><div class="desc">ONにすると、出せる7を手札に持っている間は他のカードを出せません。</div></span>
+        <span><b>7を先に出す義務</b><div class="desc">ONにすると、出せる7を手札に持っている間は7以外を出せません。</div></span>
+      </label>
+      <label class="chk"><input type="checkbox" id="ruleAutoSeven">
+        <span><b>配布後に 7♦ を自動で出す</b><div class="desc">ONにすると、ゲーム開始時に 7♦ を持っているプレイヤーの手札から 7♦ を自動で場へ出し、そのプレイヤーの手番から続行します。OFF の場合は最初の手番で手動で 7♦ を出します。</div></span>
       </label>
       <div class="row">
         <div class="field" style="flex:1">
@@ -179,13 +182,15 @@ button:disabled{opacity:.45;cursor:not-allowed}
         <div>人数：</div><div><b id="mPlayers">-</b></div>
         <div>ループ：</div><div><b id="mLoop">-</b></div>
         <div>7先出し：</div><div><b id="mMust7">-</b></div>
+        <div>自動7♦：</div><div><b id="mAuto7">-</b></div>
         <div>ジョーカー：</div><div><b id="mJoker">-</b></div>
         <div>パス上限：</div><div><b id="mPass">-</b></div>
         <div>状態：</div><div><b id="mStatus">-</b></div>
       </div>
 
       <div class="info" style="margin-top:10px">
-        最初は <b>7♦</b> を持っている人の番で、必ず 7♦ を出して開始します。
+        最初は <b>7♦</b> を持っている人から開始します。
+        「配布後に 7♦ を自動で出す」がONなら配布直後に自動で場へ出し、OFFなら最初の手番で手動で 7♦ を出します。
         パス上限を超えると <b>脱落</b> となり、手札はすべて場に自動配置されます。
       </div>
     </section>
@@ -225,7 +230,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
           <div class="l"><b>■ 7並べの基本</b></div>
           <div class="l">・各スート（♠♥♦♣）の「7」から始め、そこから数字が隣り合うカードを上下に並べていきます。</div>
           <div class="l">・出せるのは「まだ場にない7」か「場にあるカードと同スートで数字が±1」のカードです。</div>
-          <div class="l">・最初は <b>7♦</b> を持っている人が必ず 7♦ を出します。</div>
+          <div class="l">・最初は <b>7♦</b> を持っている人から始まります。設定で「配布後に 7♦ を自動で出す」をONにした場合は、配布直後に自動で場へ出してからその人の手番が始まります。OFFの場合は最初の手番で手動で 7♦ を出します。</div>
           <div class="l">・手札を最初に全部出し切った人が <b>1位</b>。以降、出し切った順に着順が付きます。</div>
           <div class="l" style="margin-top:6px"><b>■ パスと脱落</b></div>
           <div class="l">・出せない／出したくない時は「パス」。設定回数（既定3回）を超えてパスすると <b>脱落</b> となり、手札はすべて場に自動で開放されます。脱落者は最下位グループです（残り枚数が少ない順）。</div>
@@ -235,6 +240,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
           <div class="l" style="margin-top:6px"><b>■ ローカルルール</b></div>
           <div class="l">・ループON：Kの隣にAが出せます（循環）。</div>
           <div class="l">・7先出しON：出せる7を持っている間は7以外を出せません。</div>
+          <div class="l">・自動7♦ ON：配布直後に 7♦ を自動で場へ出し、その持ち主の手番から続行します。OFFなら最初の手番で手動で 7♦ を出します。</div>
           <div class="l" style="margin-top:6px"><b>■ 操作</b></div>
           <div class="l">・緑枠の手札をクリックで出す。ジョーカーはクリック後、光っているマスをクリックして配置。</div>
           <div class="l">・「スート順」「数字順」ボタンで手札を並べ替え。</div>
@@ -381,6 +387,7 @@ async function apiCreateRoom(){
   const settings={
     loop: document.getElementById("ruleLoop").checked,
     mustPlaySeven: document.getElementById("ruleMustSeven").checked,
+    autoOpenDiamond7: document.getElementById("ruleAutoSeven").checked,
     jokers: parseInt(document.getElementById("jokerCount").value,10),
     passLimit: parseInt(document.getElementById("passLimit").value,10),
     maxPlayers: parseInt(document.getElementById("maxPlayers").value,10)
@@ -498,7 +505,17 @@ async function apiStartGame(){
   }
   // 7♦ 保持者を探す
   let firstSeat=seated[0].seat;
-  for(const p of seated){ if(hands[p.uid].includes("7d")){ firstSeat=p.seat; break; } }
+  let firstUid=seated[0].uid;
+  for(const p of seated){ if(hands[p.uid].includes("7d")){ firstSeat=p.seat; firstUid=p.uid; break; } }
+
+  // 設定に応じて 7♦ を自動で場に出す
+  const board={};
+  let pendingFirst=true;
+  if(r.settings.autoOpenDiamond7 && hands[firstUid] && hands[firstUid].includes("7d")){
+    hands[firstUid]=hands[firstUid].filter(c=>c!=="7d");
+    board[keyOf("d",7)]={ j:0, real:"7d", by:firstUid };
+    pendingFirst=false;
+  }
 
   const gameNo=(r.gameNo||0)+1;
   const playerUpdates={};
@@ -507,7 +524,7 @@ async function apiStartGame(){
   });
 
   await roomRef(id).update({
-    status:"playing", gameNo, board:{}, pendingFirst:true,
+    status:"playing", gameNo, board, pendingFirst,
     turnSeat:firstSeat, finishOrder:[], results:null,
     updatedAt: firebase.database.ServerValue.TIMESTAMP
   });
@@ -517,7 +534,10 @@ async function apiStartGame(){
     await fdb.ref("sevensHands/"+id+"/"+uid).set(hands[uid]);
   }
   const fp=seated.find(p=>p.seat===firstSeat);
-  await appendLog(id, `第${gameNo}ゲーム開始 / ${seated.length}人 / 初手: ${fp?fp.name:"?"}（7♦） / ループ:${r.settings.loop?"ON":"OFF"} ジョーカー:${r.settings.jokers}枚 パス:${r.settings.passLimit<0?"無制限":r.settings.passLimit+"回"} 7先出し:${r.settings.mustPlaySeven?"ON":"OFF"}`);
+  await appendLog(id, `第${gameNo}ゲーム開始 / ${seated.length}人 / 初手: ${fp?fp.name:"?"}（7♦） / ループ:${r.settings.loop?"ON":"OFF"} ジョーカー:${r.settings.jokers}枚 パス:${r.settings.passLimit<0?"無制限":r.settings.passLimit+"回"} 7先出し:${r.settings.mustPlaySeven?"ON":"OFF"} 自動7♦:${r.settings.autoOpenDiamond7?"ON":"OFF"}`);
+  if(r.settings.autoOpenDiamond7){
+    await appendLog(id, `${fp?fp.name:"?"} の 7♦ を自動で場に出しました`);
+  }
 }
 
 async function apiResetRoom(){
@@ -747,6 +767,7 @@ function renderMeta(){
   document.getElementById("mPlayers").textContent = r? `${Object.keys(state.players).length}/${r.settings.maxPlayers}人` : "-";
   document.getElementById("mLoop").textContent  = r? (r.settings.loop?"ON":"OFF") : "-";
   document.getElementById("mMust7").textContent = r? (r.settings.mustPlaySeven?"ON":"OFF") : "-";
+  document.getElementById("mAuto7").textContent = r? (r.settings.autoOpenDiamond7?"ON":"OFF") : "-";
   document.getElementById("mJoker").textContent = r? r.settings.jokers+"枚" : "-";
   document.getElementById("mPass").textContent  = r? (r.settings.passLimit<0?"無制限":r.settings.passLimit+"回") : "-";
   document.getElementById("mStatus").textContent= r? ({waiting:"待機中",playing:"対戦中",ended:"結果表示"}[r.status]||r.status) : "-";
@@ -959,7 +980,7 @@ function renderModal(){
   root.innerHTML=`<div class="modal"><div class="box">
     <h2>結果（第${r.gameNo}ゲーム）</h2>
     <div style="font-size:12px;color:#8a94ab;margin-bottom:8px">
-      ループ:${s.loop?"ON":"OFF"} / 7先出し:${s.mustPlaySeven?"ON":"OFF"} / ジョーカー:${s.jokers}枚 / パス:${s.passLimit<0?"無制限":s.passLimit+"回"}
+      ループ:${s.loop?"ON":"OFF"} / 7先出し:${s.mustPlaySeven?"ON":"OFF"} / 自動7♦:${s.autoOpenDiamond7?"ON":"OFF"} / ジョーカー:${s.jokers}枚 / パス:${s.passLimit<0?"無制限":s.passLimit+"回"}
     </div>
     ${rows}
     <div class="row" style="justify-content:flex-end;margin-top:10px">
@@ -969,5 +990,6 @@ function renderModal(){
   document.getElementById("mClose").onclick=()=>{ _modalClosedFor=r.gameNo; root.innerHTML=""; };
 }
 </script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79"}' crossorigin="anonymous"></script>
 </body>
 </html>
